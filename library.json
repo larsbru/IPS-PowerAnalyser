@@ -1,11 +1,10 @@
 {
-  "id": "{6B6C6E2D-5C3C-4E44-97C8-5E9A7A9E7A01}",
-  "author": "PowerAnalyzer",
-  "name": "PowerAnalyzer Library",
-  "url": "",
-  "compatibility": {
-    "version": "6.0"
-  },
-  "version": "0.1.0",
-  "build": 1
+  "id": "{1F8D9F9E-7E8D-4F3E-BA49-8B7DB7E1B1AA},
+  "name": "PowerAnalyzer",
+  "author": "Lars Bruckschen",
+  "url": "https://github.com/>larsbru/IPS_PowerAnalyser",
+  "compatibility": { "version": "7.0" },
+  "version": "1.0",
+  "build": 1,
+  "date": 20250101
 }
