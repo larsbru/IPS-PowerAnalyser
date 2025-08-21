@@ -1,0 +1,11 @@
+{
+  "id": "{6B6C6E2D-5C3C-4E44-97C8-5E9A7A9E7A01}",
+  "author": "PowerAnalyzer",
+  "name": "PowerAnalyzer Library",
+  "url": "",
+  "compatibility": {
+    "version": "6.0"
+  },
+  "version": "0.1.0",
+  "build": 1
+}
