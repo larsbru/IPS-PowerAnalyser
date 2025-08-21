@@ -1,0 +1,49 @@
+{
+  "elements": [
+    { "type": "Label", "caption": "Konfiguration" },
+    {
+      "type": "NumberSpinner",
+      "name": "ArchiveControlID",
+      "caption": "ArchiveControl-ID",
+      "minimum": 1
+    },
+    {
+      "type": "NumberSpinner",
+      "name": "PowerVarID",
+      "caption": "Power-Variable (W)",
+      "minimum": 1
+    },
+    {
+      "type": "NumberSpinner",
+      "name": "Months",
+      "caption": "Monate analysieren",
+      "minimum": 1,
+      "maximum": 36
+    },
+    {
+      "type": "CheckBox",
+      "name": "TimerEnabled",
+      "caption": "Timer aktiv"
+    },
+    {
+      "type": "NumberSpinner",
+      "name": "TimerSeconds",
+      "caption": "Timer (Sekunden)",
+      "minimum": 30,
+      "maximum": 3600
+    },
+    {
+      "type": "CheckBox",
+      "name": "Debug",
+      "caption": "Debug-Modus"
+    },
+    { "type": "Label", "caption": "Aktionen" },
+    {
+      "type": "Button",
+      "caption": "Jetzt analysieren",
+      "onClick": "PA_Update($id);"
+    }
+  ],
+  "actions": [],
+  "status": []
+}
