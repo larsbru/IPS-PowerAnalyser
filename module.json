@@ -1,0 +1,16 @@
+{
+  "id": "{2C9A0D2E-7A36-4F88-9F2A-7F7E6B9E6F01}",
+  "name": "PowerAnalyzer",
+  "type": 3,
+  "vendor": "PowerAnalyzer",
+  "aliases": [
+    "Power Analyzer"
+  ],
+  "parentRequirements": [],
+  "childRequirements": [],
+  "implemented": [],
+  "prefix": "PA",
+  "url": "",
+  "version": "0.1.0",
+  "build": 1
+}
