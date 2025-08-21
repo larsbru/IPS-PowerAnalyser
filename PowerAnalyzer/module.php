@@ -5,10 +5,9 @@ class PowerAnalyzer extends IPSModule
 {
     public function Create()
     {
-        // Immer aufrufen!
         parent::Create();
 
-        // Properties (mit deinen Defaults)
+        // Properties (Konfiguration)
         $this->RegisterPropertyInteger('ArchiveControlID', 12496);
         $this->RegisterPropertyInteger('PowerVarID', 0);
         $this->RegisterPropertyInteger('Months', 12);
@@ -16,13 +15,13 @@ class PowerAnalyzer extends IPSModule
         $this->RegisterPropertyInteger('TimerSeconds', 300);
         $this->RegisterPropertyBoolean('Debug', false);
 
-        // Hilfs-Attribut: ID des Konfig-Ordners unter der Instanz
+        // Hilfs-Attribut (Config-Category unter Instanz)
         $this->RegisterAttributeInteger('CfgCategoryID', 0);
 
-        // Timer
-        $this->RegisterTimer('Update', 0, 'PA_Update($_IPS[\'TARGET\']);');
+        // Timer: ruft über IPS_RequestAction die Instanzmethode Update()
+        $this->RegisterTimer('Update', 0, 'IPS_RequestAction($_IPS[\'TARGET\'], "RunUpdate", 1);');
 
-        // HTML-Ausgaben (auf Instanzebene)
+        // Ausgabe-Variablen (HTML) auf Instanzebene
         $this->RegisterVariableString('ReportDeciles', 'Monatsanteile je Dezil (Heatmap)', '~HTMLBox', 10);
         $this->RegisterVariableString('ReportSummary', 'Kurzfazit', '~HTMLBox', 20);
     }
@@ -31,22 +30,22 @@ class PowerAnalyzer extends IPSModule
     {
         parent::ApplyChanges();
 
-        // Konfig-Ordner sicherstellen
+        // Konfig-Ordner unter der Instanz sicherstellen
         $cfgCatID = $this->EnsureCategory($this->InstanceID, 'Konfiguration', 'CFG');
         $this->WriteAttributeInteger('CfgCategoryID', $cfgCatID);
 
         // Profile
         $this->EnsureVarProfile('PA.Integer', VARIABLETYPE_INTEGER);
 
-        // Konfig-Variablen im WebFront (Buttons/Eingabefelder)
+        // Konfig-Variablen als "bedienbar" im WebFront (mit CustomAction auf diese Instanz)
         $vArchive = $this->EnsureVar($cfgCatID, 'ArchiveControl-ID', VARIABLETYPE_INTEGER, 'ArchiveIDVar', 'PA.Integer');
         $vPower   = $this->EnsureVar($cfgCatID, 'Power-Variable (W)', VARIABLETYPE_INTEGER, 'PowerVarIDVar', 'PA.Integer');
         $vMonths  = $this->EnsureVar($cfgCatID, 'Monate analysieren', VARIABLETYPE_INTEGER, 'MonthsVar', 'PA.Integer');
-        $vDebug   = $this->EnsureVar($cfgCatID, 'Debug-Modus', VARIABLETYPE_BOOLEAN, 'DebugVar', '');
+        $vDebug   = $this->EnsureVar($cfgCatID, 'Debug-Modus', VARIABLETYPE_BOOLEAN, 'DebugVar', '~Switch');
         $vTimOn   = $this->EnsureVar($cfgCatID, 'Timer aktiv', VARIABLETYPE_BOOLEAN, 'TimerOnVar', '~Switch');
         $vTimSec  = $this->EnsureVar($cfgCatID, 'Timer (Sekunden)', VARIABLETYPE_INTEGER, 'TimerSecVar', 'PA.Integer');
 
-        // Werte aus Properties -> Variablen spiegeln
+        // Properties -> Variablen spiegeln
         $this->SetValueIfChanged($vArchive, $this->ReadPropertyInteger('ArchiveControlID'));
         $this->SetValueIfChanged($vPower,   $this->ReadPropertyInteger('PowerVarID'));
         $this->SetValueIfChanged($vMonths,  max(1, min(36, $this->ReadPropertyInteger('Months'))));
@@ -54,24 +53,37 @@ class PowerAnalyzer extends IPSModule
         $this->SetValueIfChanged($vTimOn,   $this->ReadPropertyBoolean('TimerEnabled'));
         $this->SetValueIfChanged($vTimSec,  max(30, min(3600, $this->ReadPropertyInteger('TimerSeconds'))));
 
-        // Variablen beschreibbar machen -> Aktionen kommen an RequestAction()
+        // Bedienbar machen (RequestAction trifft diese Instanz)
         foreach ([$vArchive,$vPower,$vMonths,$vDebug,$vTimOn,$vTimSec] as $vid) {
             IPS_SetVariableCustomAction($vid, $this->InstanceID);
         }
 
         // Timer anwenden
-        $this->SetTimerInterval('Update',
+        $this->SetTimerInterval(
+            'Update',
             $this->ReadPropertyBoolean('TimerEnabled') ? $this->ReadPropertyInteger('TimerSeconds') * 1000 : 0
         );
 
-        // Optional: beim Übernehmen einmal rechnen (sanft)
-        // $this->Update();
+        // Nach ApplyChanges optional rechnen (nur wenn Kernel bereit)
+        if (IPS_GetKernelRunlevel() == KR_READY) {
+            // sanfte Initialisierung
+            try { $this->Update(); } catch (\Throwable $e) { /* ign */ }
+        }
     }
 
+    /**
+     * Zentraler Entry-Point für:
+     * - Timer ("RunUpdate")
+     * - WebFront-Änderungen an Konfig-Variablen (Idents ...Var)
+     */
     public function RequestAction($Ident, $Value)
     {
-        // Änderung aus dem WebFront: Variablen -> Properties -> ApplyChanges -> Update()
         switch ($Ident) {
+            case 'RunUpdate':
+                // Timer & Button aus Form.json landen hier
+                $this->Update();
+                return;
+
             case 'ArchiveIDVar':
                 $Value = (int)$Value;
                 $this->SetConfigAndValue('ArchiveControlID', $Ident, $Value);
@@ -106,17 +118,16 @@ class PowerAnalyzer extends IPSModule
                 throw new Exception('Unknown Ident: ' . $Ident);
         }
 
-        // Änderungen sofort wirksam machen
+        // Änderungen aktivieren & neu rechnen
         $this->ApplyChanges();
         $this->Update();
     }
 
-    /** Button aus der Form */
+    /** Hauptlauf (Timer + Button) */
     public function Update()
     {
-        // Analyse durchführen und rendern
-        $acID = $this->ReadPropertyInteger('ArchiveControlID');
-        $pvID = $this->ReadPropertyInteger('PowerVarID');
+        $acID   = $this->ReadPropertyInteger('ArchiveControlID');
+        $pvID   = $this->ReadPropertyInteger('PowerVarID');
         $months = max(1, (int)$this->ReadPropertyInteger('Months'));
 
         if ($acID <= 0 || !IPS_InstanceExists($acID)) {
@@ -128,7 +139,7 @@ class PowerAnalyzer extends IPSModule
             return;
         }
 
-        // Monate erzeugen
+        // Monate erzeugen (rückwärts, inkl. laufendes)
         $now = time();
         $monthsInfo = [];
         for ($i = $months - 1; $i >= 0; $i--) {
@@ -141,7 +152,7 @@ class PowerAnalyzer extends IPSModule
             ];
         }
 
-        // Globales Max (echter Max) aus Duration-Quelle
+        // Globales echtes Max über alle Monate
         $globalMax = 0.0;
         foreach ($monthsInfo as $m) {
             $maxM = $this->readMonthMax_duration($acID, $pvID, $m['start'], $m['end']);
@@ -149,19 +160,19 @@ class PowerAnalyzer extends IPSModule
         }
         if ($globalMax <= 0) $globalMax = 1.0;
 
-        // Bänder
+        // 10 Bänder (Dezile) aus globalem Max
         $bands = [];
         for ($d = 1; $d <= 10; $d++) $bands[] = ($globalMax * $d) / 10.0;
 
-        // Ergebnisse je Monat
-        $results = [];
+        // pro Monat: Verteilung + Stats
+        $results    = [];
         $monthStats = [];
         foreach ($monthsInfo as $idx => $m) {
             $results[$idx]    = $this->computeMonthDeciles_duration($acID, $pvID, $m['start'], $m['end'], $bands);
             $monthStats[$idx] = $this->computeMonthAvgMax($acID, $pvID, $m['start'], $m['end']);
         }
 
-        // globale Max-Zelle finden
+        // globale Max-Zelle finden (Monat/Band)
         $globalIdx = 0; $globalVal = -INF;
         foreach ($results as $i => $r) {
             if (($r['maxVal'] ?? 0) > $globalVal) { $globalVal = $r['maxVal']; $globalIdx = $i; }
@@ -177,7 +188,7 @@ class PowerAnalyzer extends IPSModule
         SetValueString($this->GetIDForIdent('ReportSummary'), $summary);
     }
 
-    /* ===================== Helpers: Struktur/Variablen ===================== */
+    /* =================== Struktur/Variablen-Helpers =================== */
 
     private function EnsureCategory(int $parentID, string $name, string $ident): int
     {
@@ -186,7 +197,6 @@ class PowerAnalyzer extends IPSModule
             if (IPS_GetObject($id)['ObjectName'] !== $name) IPS_SetName($id, $name);
             return $id;
         }
-        // neu
         $id = IPS_CreateCategory();
         IPS_SetParent($id, $parentID);
         IPS_SetName($id, $name);
@@ -227,11 +237,11 @@ class PowerAnalyzer extends IPSModule
 
     private function SetConfigAndValue(string $propName, string $ident, $value): void
     {
-        // Variable setzen
+        // Variable (im Konfig-Ordner) setzen
         $varID = @IPS_GetObjectIDByIdent($ident, $this->ReadAttributeInteger('CfgCategoryID'));
         if ($varID) SetValue($varID, $value);
 
-        // Property setzen + anwenden
+        // Property setzen (persistente Konfig)
         IPS_SetProperty($this->InstanceID, $propName, $value);
     }
 
@@ -242,8 +252,9 @@ class PowerAnalyzer extends IPSModule
         SetValueString($this->GetIDForIdent('ReportSummary'), $box);
     }
 
-    /* ===================== Analyse-Funktionen (Duration-basiert) ===================== */
+    /* =================== Analyse-Hilfsfunktionen =================== */
 
+    // ECHTES Monats-Max aus geloggten Rows (Value), Duration egal
     private function readMonthMax_duration(int $acID, int $varID, int $start, int $end): float
     {
         $max = 0.0;
@@ -255,6 +266,12 @@ class PowerAnalyzer extends IPSModule
         return $max;
     }
 
+    /**
+     * Zeitgewichtete Verteilung:
+     * - jede Row: clamp auf [start,end] -> Dauer d in s
+     * - Dauer exakt EINEM Dezil zuordnen (inkl. oberes Intervall)
+     * - Prozent auf 2 NK, aufrunden (Mind. 0,01 % falls >0), Summenkorrektur -> 100,00 %
+     */
     private function computeMonthDeciles_duration(int $acID, int $varID, int $start, int $end, array $bands): array
     {
         $sec = array_fill(0, 10, 0);
@@ -265,42 +282,43 @@ class PowerAnalyzer extends IPSModule
 
         foreach ($rows as $r) {
             $ts  = (int)$r['TimeStamp'];
-            $dur = (int)$r['Duration'];   // Sekunden
+            $dur = (int)$r['Duration'];   // Sekunden laut IP-Symcon
             $val = (float)$r['Value'];
 
-            // Clamp auf Monatsfenster
+            // auf Monatsfenster clampen
             $segStart = max($ts, $start);
             $segEnd   = min($ts + $dur, $end);
             $d = $segEnd - $segStart;
             if ($d <= 0) continue;
 
-            // Max verfolgen
+            // Max tracken
             if ($val > $monthMaxVal) {
                 $monthMaxVal  = $val;
                 $monthMaxBand = $this->valueToBandByEdges($val, $bands);
             }
 
-            // Dauer einem Band zuordnen
+            // Dauer genau einem Band zuordnen
             $idx = $this->valueToBandByEdges($val, $bands);
             $sec[$idx] += $d;
         }
 
+        // Sekunden -> Prozent
         $sum = array_sum($sec);
         $pct = array_fill(0, 10, 0.0);
 
         if ($sum > 0) {
-            $raw = [];
             for ($i = 0; $i < 10; $i++) {
-                $raw[$i] = ($sec[$i] / $sum) * 100.0;
-                if ($raw[$i] <= 0.0) {
+                $raw = ($sec[$i] / $sum) * 100.0;
+                if ($raw <= 0.0) {
                     $pct[$i] = 0.00;
                 } else {
-                    $up = ceil($raw[$i] * 100.0) / 100.0; // immer aufrunden auf 2 NK
+                    // immer auf 2 NK AUFRUNDEN (und min. 0,01%, falls > 0)
+                    $up = ceil($raw * 100.0) / 100.0;
                     if ($up < 0.01) $up = 0.01;
                     $pct[$i] = round($up, 2);
                 }
             }
-            // Summenkorrektur -> exakt 100,00 %
+            // Summenkorrektur auf exakt 100,00 %
             $sumRounded = array_sum($pct);
             $diff = round(100.00 - $sumRounded, 2);
             if (abs($diff) >= 0.01) {
@@ -314,6 +332,7 @@ class PowerAnalyzer extends IPSModule
         return ['pct' => $pct, 'sec' => $sec, 'maxVal' => $monthMaxVal, 'maxBand' => $monthMaxBand];
     }
 
+    // inklusives Mapping: v <= edge[i] -> i; letzter Band enthält Max
     private function valueToBandByEdges(float $v, array $bands): int
     {
         if ($v <= 0) return 0;
@@ -326,7 +345,7 @@ class PowerAnalyzer extends IPSModule
 
     private function computeMonthAvgMax(int $acID, int $varID, int $start, int $end): array
     {
-        $vals = @AC_GetAggregatedValues($acID, $varID, 1, $start, $end, 0);
+        $vals = @AC_GetAggregatedValues($acID, $varID, 1, $start, $end, 0); // stündlich
         if (!is_array($vals) || count($vals) == 0) return ['avg' => 0.0, 'max' => 0.0];
         $sum = 0.0; $c = 0; $mx = 0.0;
         foreach ($vals as $v) {
@@ -337,10 +356,11 @@ class PowerAnalyzer extends IPSModule
         return ['avg' => round($avg, 1), 'max' => round($mx, 1)];
     }
 
-    /* ===================== Rendering ===================== */
+    /* =================== Rendering =================== */
 
     private function renderHeatmap(array $months, array $bands, array $results, array $monthStats, int $gMon, int $gBand): string
     {
+        // Zeilenlabels (Dezil-Bänder)
         $decLabels = []; $lo = 0.0;
         for ($i = 0; $i < 10; $i++) {
             $hi = $bands[$i];
@@ -368,6 +388,7 @@ CSS;
         $thead .= '</tr>';
 
         $tbody = '';
+        // Bänderzeilen
         for ($r = 0; $r < 10; $r++) {
             $tbody .= '<tr><td class="rowhdr">' . htmlspecialchars($decLabels[$r]) . '</td>';
             foreach ($months as $idx => $m) {
@@ -376,6 +397,7 @@ CSS;
                 $pPrint = number_format($p, 2, ',', '.');
                 $isZero = (round($p, 2) === 0.00);
                 $color  = $isZero ? '#ffffff' : $this->pctToBlueYellow($p);
+                // Sekunden <60 als "x s", sonst Minuten (aufgerundet)
                 $timeTxt = ($secs < 60) ? ($secs . ' s') : (ceil($secs / 60) . ' min');
 
                 $cls = ($idx === $gMon && $r === $gBand) ? ' class="maxcell"' : '';
@@ -424,6 +446,7 @@ CSS;
 
         $avgMonth = $this->computeAvg($acID, $varID, $monthStart, $monthEnd);
         $maxMonth = $this->computeMax($acID, $varID, $monthStart, $monthEnd);
+
         $avgDay   = $this->computeAvg($acID, $varID, $dayStart, $dayEnd);
         $maxDay   = $this->computeMax($acID, $varID, $dayStart, $dayEnd);
 
@@ -444,7 +467,7 @@ CSS;
 
     private function computeAvg(int $acID, int $varID, int $start, int $end): float
     {
-        $vals = @AC_GetAggregatedValues($acID, $varID, 1, $start, $end, 0);
+        $vals = @AC_GetAggregatedValues($acID, $varID, 1, $start, $end, 0); // stündlich
         if (!is_array($vals) || count($vals) == 0) return 0.0;
         $sum = 0.0; $c = 0;
         foreach ($vals as $v) { $sum += (float)$v['Avg']; $c++; }
@@ -459,22 +482,4 @@ CSS;
         foreach ($vals as $v) { $vMax = (float)$v['Max']; if ($vMax > $m) $m = $vMax; }
         return $m;
     }
-}
-
-// Globale Wrapper-Funktion für Actions im Form.json
-function PA_Update(int $InstanceID)
-{
-    $obj = IPS_GetInstance($InstanceID);
-    if ($obj['ModuleInfo']['ModuleID'] !== '{2C9A0D2E-7A36-4F88-9F2A-7F7E6B9E6F01}') {
-        throw new Exception('Wrong instance type');
-    }
-    /** @var PowerAnalyzer $inst */
-    $inst = IPS_GetInstanceObject($InstanceID);
-    // Fallback, falls Umgebung keine Instanz-Rückgabe hat:
-    if (!method_exists($inst, 'Update')) {
-        // Normale Instanz-Methode aufrufen
-        IPS_RequestAction($InstanceID, 'TimerOnVar', GetValueBoolean(@IPS_GetObjectIDByIdent('TimerOnVar', $InstanceID)));
-    }
-    $module = new PowerAnalyzer($InstanceID);
-    $module->Update();
 }
