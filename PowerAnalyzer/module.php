@@ -37,13 +37,13 @@ class PowerAnalyzer extends IPSModule
         // Profile
         $this->EnsureVarProfile('PA.Integer', VARIABLETYPE_INTEGER);
 
-        // Konfig-Variablen als "bedienbar" im WebFront (mit CustomAction auf diese Instanz)
+        // Konfig-Variablen (bedienbar im WebFront)
         $vArchive = $this->EnsureVar($cfgCatID, 'ArchiveControl-ID', VARIABLETYPE_INTEGER, 'ArchiveIDVar', 'PA.Integer');
         $vPower   = $this->EnsureVar($cfgCatID, 'Power-Variable (W)', VARIABLETYPE_INTEGER, 'PowerVarIDVar', 'PA.Integer');
         $vMonths  = $this->EnsureVar($cfgCatID, 'Monate analysieren', VARIABLETYPE_INTEGER, 'MonthsVar', 'PA.Integer');
-        $vDebug   = $this->EnsureVar($cfgCatID, 'Debug-Modus', VARIABLETYPE_BOOLEAN, 'DebugVar', '~Switch');
-        $vTimOn   = $this->EnsureVar($cfgCatID, 'Timer aktiv', VARIABLETYPE_BOOLEAN, 'TimerOnVar', '~Switch');
-        $vTimSec  = $this->EnsureVar($cfgCatID, 'Timer (Sekunden)', VARIABLETYPE_INTEGER, 'TimerSecVar', 'PA.Integer');
+        $vDebug   = $this->EnsureVar($cfgCatID, 'Debug-Modus',       VARIABLETYPE_BOOLEAN, 'DebugVar',   '~Switch');
+        $vTimOn   = $this->EnsureVar($cfgCatID, 'Timer aktiv',        VARIABLETYPE_BOOLEAN, 'TimerOnVar', '~Switch');
+        $vTimSec  = $this->EnsureVar($cfgCatID, 'Timer (Sekunden)',   VARIABLETYPE_INTEGER, 'TimerSecVar','PA.Integer');
 
         // Properties -> Variablen spiegeln
         $this->SetValueIfChanged($vArchive, $this->ReadPropertyInteger('ArchiveControlID'));
@@ -53,9 +53,10 @@ class PowerAnalyzer extends IPSModule
         $this->SetValueIfChanged($vTimOn,   $this->ReadPropertyBoolean('TimerEnabled'));
         $this->SetValueIfChanged($vTimSec,  max(30, min(3600, $this->ReadPropertyInteger('TimerSeconds'))));
 
-        // Bedienbar machen (RequestAction trifft diese Instanz)
+        // Action-Forwarder-Skript sicherstellen und als CustomAction setzen
+        $actionScriptID = $this->EnsureActionScript();
         foreach ([$vArchive,$vPower,$vMonths,$vDebug,$vTimOn,$vTimSec] as $vid) {
-            IPS_SetVariableCustomAction($vid, $this->InstanceID);
+            IPS_SetVariableCustomAction($vid, $actionScriptID);
         }
 
         // Timer anwenden
@@ -66,53 +67,34 @@ class PowerAnalyzer extends IPSModule
 
         // Nach ApplyChanges optional rechnen (nur wenn Kernel bereit)
         if (IPS_GetKernelRunlevel() == KR_READY) {
-            // sanfte Initialisierung
-            try { $this->Update(); } catch (\Throwable $e) { /* ign */ }
+            try { $this->Update(); } catch (\Throwable $e) { /* ignore */ }
         }
     }
 
     /**
      * Zentraler Entry-Point für:
-     * - Timer ("RunUpdate")
+     * - Timer & Form-Button ("RunUpdate")
      * - WebFront-Änderungen an Konfig-Variablen (Idents ...Var)
      */
     public function RequestAction($Ident, $Value)
     {
         switch ($Ident) {
             case 'RunUpdate':
-                // Timer & Button aus Form.json landen hier
                 $this->Update();
                 return;
 
             case 'ArchiveIDVar':
-                $Value = (int)$Value;
-                $this->SetConfigAndValue('ArchiveControlID', $Ident, $Value);
-                break;
-
+                $Value = (int)$Value; $this->SetConfigAndValue('ArchiveControlID', $Ident, $Value); break;
             case 'PowerVarIDVar':
-                $Value = (int)$Value;
-                $this->SetConfigAndValue('PowerVarID', $Ident, $Value);
-                break;
-
+                $Value = (int)$Value; $this->SetConfigAndValue('PowerVarID', $Ident, $Value); break;
             case 'MonthsVar':
-                $Value = max(1, min(36, (int)$Value));
-                $this->SetConfigAndValue('Months', $Ident, $Value);
-                break;
-
+                $Value = max(1, min(36, (int)$Value)); $this->SetConfigAndValue('Months', $Ident, $Value); break;
             case 'TimerOnVar':
-                $Value = (bool)$Value;
-                $this->SetConfigAndValue('TimerEnabled', $Ident, $Value);
-                break;
-
+                $Value = (bool)$Value; $this->SetConfigAndValue('TimerEnabled', $Ident, $Value); break;
             case 'TimerSecVar':
-                $Value = max(30, min(3600, (int)$Value));
-                $this->SetConfigAndValue('TimerSeconds', $Ident, $Value);
-                break;
-
+                $Value = max(30, min(3600, (int)$Value)); $this->SetConfigAndValue('TimerSeconds', $Ident, $Value); break;
             case 'DebugVar':
-                $Value = (bool)$Value;
-                $this->SetConfigAndValue('Debug', $Ident, $Value);
-                break;
+                $Value = (bool)$Value; $this->SetConfigAndValue('Debug', $Ident, $Value); break;
 
             default:
                 throw new Exception('Unknown Ident: ' . $Ident);
@@ -250,6 +232,34 @@ class PowerAnalyzer extends IPSModule
         $box = '<div style="font-family:Arial; color:#fff; background:#333; padding:8px;">'
              . htmlspecialchars($text) . '</div>';
         SetValueString($this->GetIDForIdent('ReportSummary'), $box);
+    }
+
+    /**
+     * Action-Forwarder-Skript anlegen/aktualisieren.
+     * Leitet CustomAction der Config-Variablen an RequestAction() dieser Instanz.
+     */
+    private function EnsureActionScript(): int
+    {
+        $ident    = 'ActionForward';
+        $parentID = $this->ReadAttributeInteger('CfgCategoryID') ?: $this->InstanceID;
+
+        $sid = @IPS_GetObjectIDByIdent($ident, $parentID);
+        if ($sid === false) {
+            $sid = IPS_CreateScript(0); // 0 = PHP
+            IPS_SetParent($sid, $parentID);
+            IPS_SetIdent($sid, $ident);
+            IPS_SetName($sid, 'PowerAnalyzer Action Forwarder');
+        }
+
+        $code = '<?php
+$iid  = ' . $this->InstanceID . ';
+$vid  = $_IPS["VARIABLE"];
+$val  = $_IPS["VALUE"];
+$ident = IPS_GetObject($vid)["ObjectIdent"]; // z.B. "ArchiveIDVar"
+IPS_RequestAction($iid, $ident, $val);
+';
+        IPS_SetScriptContent($sid, $code);
+        return $sid;
     }
 
     /* =================== Analyse-Hilfsfunktionen =================== */
