@@ -1,49 +1,74 @@
 {
   "elements": [
-    { "type": "Label", "caption": "Konfiguration" },
     {
-      "type": "NumberSpinner",
-      "name": "ArchiveControlID",
-      "caption": "ArchiveControl-ID",
-      "minimum": 1
+      "type": "Label",
+      "caption": "IPS PowerAnalyzer - Konfiguration"
     },
     {
-      "type": "NumberSpinner",
-      "name": "PowerVarID",
-      "caption": "Power-Variable (W)",
-      "minimum": 1
+      "name": "ActiveControlID",
+      "type": "SelectVariable",
+      "caption": "Power Variable"
     },
     {
+      "name": "TimerInterval",
       "type": "NumberSpinner",
-      "name": "Months",
-      "caption": "Monate analysieren",
-      "minimum": 1,
-      "maximum": 36
-    },
-    {
-      "type": "CheckBox",
-      "name": "TimerEnabled",
-      "caption": "Timer aktiv"
-    },
-    {
-      "type": "NumberSpinner",
-      "name": "TimerSeconds",
       "caption": "Timer (Sekunden)",
-      "minimum": 30,
+      "suffix": "s",
+      "minimum": 10,
       "maximum": 3600
     },
     {
-      "type": "CheckBox",
-      "name": "Debug",
-      "caption": "Debug-Modus"
+      "name": "SelectedMonth",
+      "type": "Select",
+      "caption": "Monat",
+      "options": [
+        { "caption": "Januar", "value": 1 },
+        { "caption": "Februar", "value": 2 },
+        { "caption": "März", "value": 3 },
+        { "caption": "April", "value": 4 },
+        { "caption": "Mai", "value": 5 },
+        { "caption": "Juni", "value": 6 },
+        { "caption": "Juli", "value": 7 },
+        { "caption": "August", "value": 8 },
+        { "caption": "September", "value": 9 },
+        { "caption": "Oktober", "value": 10 },
+        { "caption": "November", "value": 11 },
+        { "caption": "Dezember", "value": 12 }
+      ]
     },
-    { "type": "Label", "caption": "Aktionen" },
+    {
+      "name": "EnableHeatmap",
+      "type": "CheckBox",
+      "caption": "Heatmap aktivieren"
+    },
+    {
+      "name": "EnableDebug",
+      "type": "CheckBox",
+      "caption": "Debug-Logs schreiben"
+    }
+  ],
+  "actions": [
     {
       "type": "Button",
-      "caption": "Jetzt analysieren",
+      "caption": "Analyse starten",
       "onClick": "PA_Update($id);"
     }
   ],
-  "actions": [],
-  "status": []
+  "status": [
+    {
+      "code": 101,
+      "icon": "inactive",
+      "caption": "Instanz wird erstellt"
+    },
+    {
+      "code": 102,
+      "icon": "active",
+      "caption": "Instanz ist aktiv"
+    },
+    {
+      "code": 104,
+      "icon": "error",
+      "caption": "Fehlerhafte Konfiguration"
+    }
+  ]
 }
