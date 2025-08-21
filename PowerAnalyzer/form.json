@@ -14,27 +14,15 @@
       "type": "NumberSpinner",
       "caption": "Timer (Sekunden)",
       "suffix": "s",
-      "minimum": 10,
+      "minimum": 30,
       "maximum": 3600
     },
     {
-      "name": "SelectedMonth",
-      "type": "Select",
-      "caption": "Monat",
-      "options": [
-        { "caption": "Januar", "value": 1 },
-        { "caption": "Februar", "value": 2 },
-        { "caption": "März", "value": 3 },
-        { "caption": "April", "value": 4 },
-        { "caption": "Mai", "value": 5 },
-        { "caption": "Juni", "value": 6 },
-        { "caption": "Juli", "value": 7 },
-        { "caption": "August", "value": 8 },
-        { "caption": "September", "value": 9 },
-        { "caption": "Oktober", "value": 10 },
-        { "caption": "November", "value": 11 },
-        { "caption": "Dezember", "value": 12 }
-      ]
+      "name": "Months",
+      "type": "NumberSpinner",
+      "caption": "Analyse Monate",
+      "minimum": 1,
+      "maximum": 36
     },
     {
       "name": "EnableHeatmap",
@@ -50,8 +38,8 @@
   "actions": [
     {
       "type": "Button",
-      "caption": "Analyse starten",
-      "onClick": "PA_Update($id);"
+      "caption": "Jetzt analysieren",
+      "onClick": "IPS_RequestAction($id, \"RunUpdate\", 1);"
     }
   ],
   "status": [
