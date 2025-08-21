@@ -1,10 +1,21 @@
 {
-  "id": "{1F8D9F9E-7E8D-4F3E-BA49-8B7DB7E1B1AA},
-  "name": "PowerAnalyzer",
-  "author": "Lars Bruckschen",
-  "url": "https://github.com/>larsbru/IPS_PowerAnalyser",
+  "id": "{1F8D9F9E-7E8D-4F3E-BA49-8B7DB7E1B1AA}",
+  "name": "IPS PowerAnalyzer",
+  "author": "larsbru",
+  "url": "https://github.com/larsbru/IPS-PowerAnalyzer",
   "compatibility": { "version": "7.0" },
   "version": "1.0",
   "build": 1,
-  "date": 20250101
+  "date": 20250101,
+  "modules": [
+    {
+      "id": "{7A1F2B8C-02C7-4F49-9BFA-1B0324A7E9C3}",
+      "name": "PowerAnalyzer",
+      "type": 3,
+      "prefix": "PA",
+      "vendor": "Custom",
+      "aliases": ["Power Analyzer"],
+      "url": "https://github.com/larsbru/IPS-PowerAnalyzer/PowerAnalyzer"
+    }
+  ]
 }
