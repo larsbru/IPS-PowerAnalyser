@@ -1,16 +1,14 @@
 {
-  "id": "{2C9A0D2E-7A36-4F88-9F2A-7F7E6B9E6F01}",
+  "id": "{7A1F2B8C-02C7-4F49-9BFA-1B0324A7E9C3}",
   "name": "PowerAnalyzer",
   "type": 3,
-  "vendor": "PowerAnalyzer",
-  "aliases": [
-    "Power Analyzer"
-  ],
+  "vendor": "Custom",
+  "aliases": ["Power Analyzer"],
   "parentRequirements": [],
   "childRequirements": [],
   "implemented": [],
   "prefix": "PA",
-  "url": "",
+  "url": "https://github.com/larsbru/IPS_PowerAnalyser/PowerAnalyzer",
   "version": "0.1.0",
   "build": 1
 }
