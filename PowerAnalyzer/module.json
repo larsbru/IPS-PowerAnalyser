@@ -8,7 +8,7 @@
   "childRequirements": [],
   "implemented": [],
   "prefix": "PA",
-  "url": "https://github.com/larsbru/IPS_PowerAnalyser/PowerAnalyzer",
+  "url": "https://github.com/larsbru/IPS-PowerAnalyzer/PowerAnalyzer",
   "version": "0.1.0",
   "build": 1
 }
