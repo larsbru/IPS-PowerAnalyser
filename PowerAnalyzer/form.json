@@ -9,37 +9,41 @@
       "moduleID": "{43192F0B-135B-4FD9-8E24-B5715E593C15}"
     },
 
-    { "type": "SelectVariable", "name": "PowerVarID", "caption": "Power-Variable (Watt)" },
-
-    { "type": "NumberSpinner", "name": "Months", "caption": "Monate analysieren", "minimum": 1, "maximum": 36 },
-
-    { "type": "CheckBox", "name": "TimerEnabled", "caption": "Timer aktiv" },
-    { "type": "NumberSpinner", "name": "TimerSeconds", "caption": "Timer (Sekunden)", "minimum": 30, "maximum": 3600 },
-
-    { "type": "CheckBox", "name": "Debug", "caption": "Debug-Modus" },
-
     {
-      "type": "ExpansionPanel",
-      "caption": "Optionale Sensoren (PV / Batterie)",
-      "items": [
-        { "type": "SelectVariable", "name": "PVVarID", "caption": "PV-Erzeugung (W) [optional]" },
-        { "type": "SelectVariable", "name": "PVSurplusVarID", "caption": "PV-Überschuss (W) [optional]" },
-        { "type": "SelectVariable", "name": "GridImportVarID", "caption": "Netzbezug (W) [optional]" },
-        { "type": "SelectVariable", "name": "BatterySocVarID", "caption": "Batterie SOC (%) [optional]" }
-      ]
+      "type": "SelectVariable",
+      "name": "PowerVarID",
+      "caption": "Power-Variable (Watt)"
     },
 
     {
-      "type": "ExpansionPanel",
-      "caption": "Schwellwerte (Analyse)",
-      "items": [
-        { "type": "NumberSpinner", "name": "ThresholdOnW", "caption": "Einschalt-Schwellwert (W)", "minimum": 10, "maximum": 20000, "suffix": " W" },
-        { "type": "NumberSpinner", "name": "HysteresisW", "caption": "Hysterese (W)", "minimum": 5, "maximum": 2000, "suffix": " W" },
-        { "type": "NumberSpinner", "name": "MinOnSeconds", "caption": "Mindest-ON-Dauer (s)", "minimum": 1, "maximum": 7200, "suffix": " s" },
-        { "type": "NumberSpinner", "name": "HighLoadW", "caption": "Hochlast-Schwelle (W)", "minimum": 100, "maximum": 20000, "suffix": " W" }
-      ]
+      "type": "NumberSpinner",
+      "name": "Months",
+      "caption": "Monate analysieren",
+      "minimum": 1,
+      "maximum": 36
+    },
+
+    {
+      "type": "CheckBox",
+      "name": "TimerEnabled",
+      "caption": "Timer aktiv"
+    },
+
+    {
+      "type": "NumberSpinner",
+      "name": "TimerSeconds",
+      "caption": "Timer (Sekunden)",
+      "minimum": 30,
+      "maximum": 3600
+    },
+
+    {
+      "type": "CheckBox",
+      "name": "Debug",
+      "caption": "Debug-Modus"
     }
   ],
+
   "actions": [
     {
       "type": "Button",
@@ -47,6 +51,7 @@
       "onClick": "IPS_RequestAction($id, \"RunUpdate\", 1);"
     }
   ],
+
   "status": [
     { "code": 101, "icon": "inactive", "caption": "Instanz wird erstellt" },
     { "code": 102, "icon": "active",   "caption": "Instanz ist aktiv" },
