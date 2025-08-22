@@ -1,495 +1,728 @@
 <?php
 declare(strict_types=1);
 
+/**
+ * IPS-PowerAnalyzer - module.php
+ * Vollständige, stabile Fassung (Konfiguration im WebFront, Timer, Heatmap, Kurzfazit).
+ *
+ * Voraussetzungen:
+ *  - IP-Symcon 6.x+
+ *  - Archivsteuerung (Archive Control), Standard-ID 12496 (konfigurierbar)
+ *
+ * Struktur:
+ *  - Instanz-Root:
+ *      * Kurzfazit            (String ~HTMLBox)
+ *      * Heatmap_Monatsanteile_je_Dezil (String ~HTMLBox)
+ *  - Unterordner "Konfiguration":
+ *      * PowerVariableID          (Integer, beschreibbar)
+ *      * ArchiveControlID         (Integer, beschreibbar; Default 12496)
+ *      * YearsToAnalyze           (Integer, beschreibbar; Default 5)
+ *      * UpdateIntervalSeconds    (Integer, beschreibbar; Default 300)
+ *      * EnableAutoUpdate         (Boolean, Button)
+ *      * EnableDebug              (Boolean, Button)
+ */
+
 class PowerAnalyzer extends IPSModule
 {
+    // Idents (Variablen/Kategorien/Timer)
+    private const CAT_CFG               = 'CFG_CATEGORY';
+    private const VAR_POWER_ID          = 'CFG_POWER_ID';
+    private const VAR_AC_ID             = 'CFG_ARCHIVE_ID';
+    private const VAR_YEARS             = 'CFG_YEARS';
+    private const VAR_INTERVAL          = 'CFG_INTERVAL';
+    private const VAR_AUTO              = 'CFG_AUTO';
+    private const VAR_DEBUG             = 'CFG_DEBUG';
+
+    private const VAR_HTML_SUMMARY      = 'HTML_SUMMARY';
+    private const VAR_HTML_HEATMAP      = 'HTML_HEATMAP';
+
+    private const TIMER_NAME            = 'PA_UpdateTimer';
+
+    // Property-Namen
+    private const PROP_POWER_ID         = 'PowerVariableID';
+    private const PROP_ARCHIVE_ID       = 'ArchiveControlID';
+    private const PROP_YEARS            = 'YearsToAnalyze';
+    private const PROP_INTERVAL         = 'UpdateIntervalSeconds';
+    private const PROP_AUTO             = 'EnableAutoUpdate';
+    private const PROP_DEBUG            = 'EnableDebug';
+
     public function Create()
     {
         parent::Create();
 
-        // Properties (Konfiguration)
-        $this->RegisterPropertyInteger('ArchiveControlID', 12496);
-        $this->RegisterPropertyInteger('PowerVarID', 0);
-        $this->RegisterPropertyInteger('Months', 12);
-        $this->RegisterPropertyBoolean('TimerEnabled', true);
-        $this->RegisterPropertyInteger('TimerSeconds', 300);
-        $this->RegisterPropertyBoolean('Debug', false);
+        // Properties (Defaults)
+        $this->RegisterPropertyInteger(self::PROP_POWER_ID, 0);
+        $this->RegisterPropertyInteger(self::PROP_ARCHIVE_ID, 12496);
+        $this->RegisterPropertyInteger(self::PROP_YEARS, 5);
+        $this->RegisterPropertyInteger(self::PROP_INTERVAL, 300);
+        $this->RegisterPropertyBoolean(self::PROP_AUTO, true);
+        $this->RegisterPropertyBoolean(self::PROP_DEBUG, false);
 
-        // Hilfs-Attribut (Config-Category unter Instanz)
-        $this->RegisterAttributeInteger('CfgCategoryID', 0);
+        // Timer
+        $this->RegisterTimer(self::TIMER_NAME, 0, 'PA_Update($_IPS[\'TARGET\']);');
 
-        // Timer: ruft über IPS_RequestAction die Instanzmethode Update()
-        $this->RegisterTimer('Update', 0, 'IPS_RequestAction($_IPS[\'TARGET\'], "RunUpdate", 1);');
+        // Kategorien & Variablen anlegen
+        $cfgCatID = $this->EnsureCategory(self::CAT_CFG, 'Konfiguration', $this->InstanceID);
 
-        // Ausgabe-Variablen (HTML) auf Instanzebene
-        $this->RegisterVariableString('ReportDeciles', 'Monatsanteile je Dezil (Heatmap)', '~HTMLBox', 10);
-        $this->RegisterVariableString('ReportSummary', 'Kurzfazit', '~HTMLBox', 20);
+        // Konfiguration-Variablen (beschreibbar via RequestAction)
+        $this->EnsureIntegerVar(self::VAR_POWER_ID, 'PowerVariableID', $cfgCatID, '~Number', true);
+        $this->EnsureIntegerVar(self::VAR_AC_ID, 'ArchiveControlID', $cfgCatID, '~Number', true);
+        $this->EnsureIntegerVar(self::VAR_YEARS, 'YearsToAnalyze', $cfgCatID, '~Number', true);
+        $this->EnsureIntegerVar(self::VAR_INTERVAL, 'UpdateIntervalSeconds', $cfgCatID, '~Number', true);
+        $this->EnsureBooleanVar(self::VAR_AUTO, 'EnableAutoUpdate', $cfgCatID, true);
+        $this->EnsureBooleanVar(self::VAR_DEBUG, 'EnableDebug', $cfgCatID, true);
+
+        // Reports auf Instanz-Ebene
+        $this->EnsureHTMLVar(self::VAR_HTML_SUMMARY, 'Kurzfazit', $this->InstanceID);
+        $this->EnsureHTMLVar(self::VAR_HTML_HEATMAP, 'Heatmap: Monatsanteile je Dezil', $this->InstanceID);
     }
 
     public function ApplyChanges()
     {
         parent::ApplyChanges();
 
-        // Konfig-Ordner unter der Instanz sicherstellen
-        $cfgCatID = $this->EnsureCategory($this->InstanceID, 'Konfiguration', 'CFG');
-        $this->WriteAttributeInteger('CfgCategoryID', $cfgCatID);
+        // Properties -> Konfig-Variablen synchronisieren (damit WebFront Werte sieht)
+        $this->SetValueSafe(self::VAR_POWER_ID, (int)$this->ReadPropertyInteger(self::PROP_POWER_ID));
+        $this->SetValueSafe(self::VAR_AC_ID,    (int)$this->ReadPropertyInteger(self::PROP_ARCHIVE_ID));
+        $this->SetValueSafe(self::VAR_YEARS,    (int)$this->ReadPropertyInteger(self::PROP_YEARS));
+        $this->SetValueSafe(self::VAR_INTERVAL, (int)$this->ReadPropertyInteger(self::PROP_INTERVAL));
+        $this->SetValueSafe(self::VAR_AUTO,     (bool)$this->ReadPropertyBoolean(self::PROP_AUTO));
+        $this->SetValueSafe(self::VAR_DEBUG,    (bool)$this->ReadPropertyBoolean(self::PROP_DEBUG));
 
-        // Profile
-        $this->EnsureVarProfile('PA.Integer', VARIABLETYPE_INTEGER);
+        // Timer setzen / stoppen
+        $interval = max(0, (int)$this->ReadPropertyInteger(self::PROP_INTERVAL));
+        $auto     = (bool)$this->ReadPropertyBoolean(self::PROP_AUTO);
 
-        // Konfig-Variablen (bedienbar im WebFront)
-        $vArchive = $this->EnsureVar($cfgCatID, 'ArchiveControl-ID', VARIABLETYPE_INTEGER, 'ArchiveIDVar', 'PA.Integer');
-        $vPower   = $this->EnsureVar($cfgCatID, 'Power-Variable (W)', VARIABLETYPE_INTEGER, 'PowerVarIDVar', 'PA.Integer');
-        $vMonths  = $this->EnsureVar($cfgCatID, 'Monate analysieren', VARIABLETYPE_INTEGER, 'MonthsVar', 'PA.Integer');
-        $vDebug   = $this->EnsureVar($cfgCatID, 'Debug-Modus',       VARIABLETYPE_BOOLEAN, 'DebugVar',   '~Switch');
-        $vTimOn   = $this->EnsureVar($cfgCatID, 'Timer aktiv',        VARIABLETYPE_BOOLEAN, 'TimerOnVar', '~Switch');
-        $vTimSec  = $this->EnsureVar($cfgCatID, 'Timer (Sekunden)',   VARIABLETYPE_INTEGER, 'TimerSecVar','PA.Integer');
+        $this->SetTimerInterval(self::TIMER_NAME, ($auto && $interval > 0) ? $interval * 1000 : 0);
 
-        // Properties -> Variablen spiegeln
-        $this->SetValueIfChanged($vArchive, $this->ReadPropertyInteger('ArchiveControlID'));
-        $this->SetValueIfChanged($vPower,   $this->ReadPropertyInteger('PowerVarID'));
-        $this->SetValueIfChanged($vMonths,  max(1, min(36, $this->ReadPropertyInteger('Months'))));
-        $this->SetValueIfChanged($vDebug,   $this->ReadPropertyBoolean('Debug'));
-        $this->SetValueIfChanged($vTimOn,   $this->ReadPropertyBoolean('TimerEnabled'));
-        $this->SetValueIfChanged($vTimSec,  max(30, min(3600, $this->ReadPropertyInteger('TimerSeconds'))));
-
-        // Action-Forwarder-Skript sicherstellen und als CustomAction setzen
-        $actionScriptID = $this->EnsureActionScript();
-        foreach ([$vArchive,$vPower,$vMonths,$vDebug,$vTimOn,$vTimSec] as $vid) {
-            IPS_SetVariableCustomAction($vid, $actionScriptID);
-        }
-
-        // Timer anwenden
-        $this->SetTimerInterval(
-            'Update',
-            $this->ReadPropertyBoolean('TimerEnabled') ? $this->ReadPropertyInteger('TimerSeconds') * 1000 : 0
-        );
-
-        // Nach ApplyChanges optional rechnen (nur wenn Kernel bereit)
-        if (IPS_GetKernelRunlevel() == KR_READY) {
-            try { $this->Update(); } catch (\Throwable $e) { /* ignore */ }
+        // Optional: beim ApplyChanges einmal aktualisieren (nicht bei jedem Klick)
+        if ($auto && $interval > 0) {
+            // kleine Verzögerung ist durch Timer gegeben; hier direkte Initial-Aktualisierung:
+            $this->Update();
         }
     }
 
     /**
-     * Zentraler Entry-Point für:
-     * - Timer & Form-Button ("RunUpdate")
-     * - WebFront-Änderungen an Konfig-Variablen (Idents ...Var)
+     * WebFront schreibt Variablen an die Instanz (Buttons / editierbare Felder)
      */
     public function RequestAction($Ident, $Value)
     {
         switch ($Ident) {
-            case 'RunUpdate':
-                $this->Update();
-                return;
+            case self::VAR_POWER_ID:
+                $this->UpdatePropertyAndVar(self::PROP_POWER_ID, self::VAR_POWER_ID, (int)$Value);
+                break;
 
-            case 'ArchiveIDVar':
-                $Value = (int)$Value; $this->SetConfigAndValue('ArchiveControlID', $Ident, $Value); break;
-            case 'PowerVarIDVar':
-                $Value = (int)$Value; $this->SetConfigAndValue('PowerVarID', $Ident, $Value); break;
-            case 'MonthsVar':
-                $Value = max(1, min(36, (int)$Value)); $this->SetConfigAndValue('Months', $Ident, $Value); break;
-            case 'TimerOnVar':
-                $Value = (bool)$Value; $this->SetConfigAndValue('TimerEnabled', $Ident, $Value); break;
-            case 'TimerSecVar':
-                $Value = max(30, min(3600, (int)$Value)); $this->SetConfigAndValue('TimerSeconds', $Ident, $Value); break;
-            case 'DebugVar':
-                $Value = (bool)$Value; $this->SetConfigAndValue('Debug', $Ident, $Value); break;
+            case self::VAR_AC_ID:
+                $this->UpdatePropertyAndVar(self::PROP_ARCHIVE_ID, self::VAR_AC_ID, (int)$Value);
+                break;
+
+            case self::VAR_YEARS:
+                $val = max(1, (int)$Value);
+                $this->UpdatePropertyAndVar(self::PROP_YEARS, self::VAR_YEARS, $val);
+                break;
+
+            case self::VAR_INTERVAL:
+                $val = max(10, (int)$Value);
+                $this->UpdatePropertyAndVar(self::PROP_INTERVAL, self::VAR_INTERVAL, $val);
+                // Timer direkt neu setzen
+                $auto = (bool)$this->ReadPropertyBoolean(self::PROP_AUTO);
+                $this->SetTimerInterval(self::TIMER_NAME, $auto ? $val * 1000 : 0);
+                break;
+
+            case self::VAR_AUTO:
+                $this->UpdatePropertyAndVar(self::PROP_AUTO, self::VAR_AUTO, (bool)$Value);
+                // Timer an/aus
+                $interval = (int)$this->ReadPropertyInteger(self::PROP_INTERVAL);
+                $auto     = (bool)$Value;
+                $this->SetTimerInterval(self::TIMER_NAME, ($auto && $interval > 0) ? $interval * 1000 : 0);
+                break;
+
+            case self::VAR_DEBUG:
+                $this->UpdatePropertyAndVar(self::PROP_DEBUG, self::VAR_DEBUG, (bool)$Value);
+                break;
 
             default:
-                throw new Exception('Unknown Ident: ' . $Ident);
+                throw new Exception("Unbekannter Ident: " . $Ident);
         }
 
-        // Änderungen aktivieren & neu rechnen
-        $this->ApplyChanges();
-        $this->Update();
+        // Nach Einstellungsänderungen neu berechnen
+        if (in_array($Ident, [self::VAR_POWER_ID, self::VAR_AC_ID, self::VAR_YEARS], true)) {
+            $this->Update();
+        }
     }
 
-    /** Hauptlauf (Timer + Button) */
+    /**
+     * Manuelle/Timer-Aktualisierung
+     */
     public function Update()
     {
-        $acID   = $this->ReadPropertyInteger('ArchiveControlID');
-        $pvID   = $this->ReadPropertyInteger('PowerVarID');
-        $months = max(1, (int)$this->ReadPropertyInteger('Months'));
+        $debug   = (bool)$this->ReadPropertyBoolean(self::PROP_DEBUG);
+        $powerID = (int)$this->ReadPropertyInteger(self::PROP_POWER_ID);
+        $acID    = (int)$this->ReadPropertyInteger(self::PROP_ARCHIVE_ID);
+        $years   = max(1, (int)$this->ReadPropertyInteger(self::PROP_YEARS));
+
+        if ($powerID <= 0 || !IPS_VariableExists($powerID)) {
+            $this->WriteHTML(self::VAR_HTML_SUMMARY, $this->WarnBox('PowerVariableID ist ungültig oder existiert nicht.'));
+            $this->WriteHTML(self::VAR_HTML_HEATMAP, $this->WarnBox('Keine Berechnung möglich.'));
+            return;
+        }
 
         if ($acID <= 0 || !IPS_InstanceExists($acID)) {
-            $this->SetSummaryBox('ArchiveControl-ID ungültig.');
-            return;
-        }
-        if ($pvID <= 0 || !IPS_VariableExists($pvID)) {
-            $this->SetSummaryBox('Power-Variable ungültig.');
+            $this->WriteHTML(self::VAR_HTML_SUMMARY, $this->WarnBox('ArchiveControlID ungültig oder Instanz existiert nicht.'));
+            $this->WriteHTML(self::VAR_HTML_HEATMAP, $this->WarnBox('Keine Berechnung möglich.'));
             return;
         }
 
-        // Monate erzeugen (rückwärts, inkl. laufendes)
+        // Logging prüfen (nur Hinweis, kein Auto-Enable hier im Modul)
+        $isLogged = @AC_GetLoggingStatus($acID, $powerID);
+        if ($isLogged === false) {
+            $this->Log('Hinweis: Die Power-Variable ist im Archiv nicht auf "Standard" gesetzt. Ergebnisse können leer/unvollständig sein.');
+        }
+
+        [$yearMax, $decileBounds, $perMonthStats] = $this->BuildDecileStats($acID, $powerID, $years, $debug);
+
+        // HTMLs rendern
+        $summary = $this->RenderSummary($yearMax, $perMonthStats);
+        $this->WriteHTML(self::VAR_HTML_SUMMARY, $summary);
+
+        $heatmap = $this->RenderHeatmap($decileBounds, $perMonthStats);
+        $this->WriteHTML(self::VAR_HTML_HEATMAP, $heatmap);
+    }
+
+    /* =========================
+     *   Berechnung / Datenzugriff
+     * ========================= */
+
+    /**
+     * Liefert:
+     *  - $yearMax (float)
+     *  - $decileBounds (array[11] Grenzwerte 0..max in 10 Dezilbänder)
+     *  - $perMonthStats: [
+     *        'YYYY-MM' => [
+     *            'minutesTotal' => int,
+     *            'max'          => float,
+     *            'avg'          => float,
+     *            'buckets'      => [10] Sekunden in jedem Dezil,
+     *        ],
+     *        ...
+     *    ]
+     */
+    private function BuildDecileStats(int $acID, int $varID, int $years, bool $debug): array
+    {
         $now = time();
-        $monthsInfo = [];
-        for ($i = $months - 1; $i >= 0; $i--) {
-            $t = strtotime(date('Y-m-01 00:00:00', strtotime("-$i month", $now)));
-            $monthsInfo[] = [
-                'start' => $t,
-                'end'   => strtotime(date('Y-m-t 23:59:59', $t)),
-                'label' => strftime('%b', $t),
-                'y'     => date('Y', $t)
+
+        // Zeitraum: letzte N Jahre bis jetzt (Monatsweise)
+        $startMonthTS = $this->MonthStart(strtotime('-' . ($years * 12 - 1) . ' months', $this->MonthStart($now)));
+
+        // 1) Jahres-Max über den Zeitraum (für Bänder)
+        $yearMax = 0.0;
+        $monthPtrs = [];
+        $ptr = $startMonthTS;
+        while ($ptr <= $now) {
+            $monthPtrs[] = $ptr;
+            $ptr = $this->MonthStart(strtotime('+1 month', $ptr));
+        }
+
+        $perMonthStats = [];
+
+        // Zunächst grob Max je Monat ermitteln und YearMax ableiten
+        foreach ($monthPtrs as $mStart) {
+            $mEnd = $this->MonthEnd($mStart);
+            $maxVal = $this->GetMonthMax($acID, $varID, $mStart, $mEnd);
+            if ($maxVal !== null && $maxVal > $yearMax) {
+                $yearMax = $maxVal;
+            }
+        }
+
+        if ($yearMax <= 0.0) {
+            $yearMax = 1.0; // Fallback, damit Bänder nicht kollabieren
+        }
+
+        // Dezil-Grenzen 0..Max in 10 gleichen Schritten
+        $decileBounds = [];
+        for ($i = 0; $i <= 10; $i++) {
+            $decileBounds[$i] = $yearMax * ($i / 10.0);
+        }
+
+        // 2) Monatliche Buckets: Sekunden pro Dezil
+        foreach ($monthPtrs as $mStart) {
+            $mEnd = $this->MonthEnd($mStart);
+            $key  = date('Y-m', $mStart);
+
+            // Sekunden pro Band
+            $secsPerBucket = array_fill(0, 10, 0);
+            $sumSecs       = 0;
+            $sumValSecs    = 0.0;
+            $maxVal        = 0.0;
+
+            // Rohdaten: alle Änderungen im Monat
+            $raw = @AC_GetLoggedValues($acID, $varID, $mStart, $mEnd, 0);
+            if (!is_array($raw)) {
+                $raw = [];
+            }
+
+            // Falls der Monat mit einem "laufenden" Wert startet, der vor Monatsbeginn gesetzt wurde:
+            $firstTS = $mStart;
+            $firstVal = null;
+
+            // Letzten Wert vor Monatsbeginn holen (Limit 1)
+            $prev = @AC_GetLoggedValues($acID, $varID, 0, $mStart - 1, 1);
+            if (is_array($prev) && count($prev) > 0) {
+                $firstVal = (float)$prev[0]['Value'];
+            } elseif (count($raw) > 0) {
+                // sonst ersten Monatswert als Startwert annehmen
+                $firstVal = (float)$raw[0]['Value'];
+                if ($raw[0]['TimeStamp'] > $mStart) {
+                    // Annahme: Wert gilt ab Monatsbeginn bis zum ersten Logeintrag
+                }
+            } else {
+                // Kein Wert -> leerer Monat
+                $perMonthStats[$key] = [
+                    'minutesTotal' => (int)round(($mEnd - $mStart + 1) / 60),
+                    'max'          => 0.0,
+                    'avg'          => 0.0,
+                    'buckets'      => $secsPerBucket
+                ];
+                continue;
+            }
+
+            $lastTS = $mStart;
+            $lastVal = $firstVal;
+
+            // Hilfsfunktion: Wert in Bucket legen
+            $bucketIndexOf = function(float $v) use ($decileBounds): int {
+                if ($v <= $decileBounds[0]) {
+                    return 0;
+                }
+                for ($i = 1; $i < 10; $i++) {
+                    if ($v <= $decileBounds[$i]) {
+                        return max(0, $i - 1);
+                    }
+                }
+                return 9; // oberstes Dezil
+            };
+
+            $accumulate = function(int $fromTS, int $toTS, float $value) use (&$secsPerBucket, &$sumSecs, &$sumValSecs, &$maxVal, $bucketIndexOf) {
+                if ($toTS <= $fromTS) {
+                    return;
+                }
+                $dur = $toTS - $fromTS; // Sekunden
+                if ($dur < 1) {
+                    return; // Spikes < 1 Sekunde ignorieren
+                }
+                $b = $bucketIndexOf($value);
+                $secsPerBucket[$b] += $dur;
+                $sumSecs           += $dur;
+                $sumValSecs        += $value * $dur;
+                if ($value > $maxVal) {
+                    $maxVal = $value;
+                }
+            };
+
+            // Durch alle Monats-Logeinträge iterieren
+            foreach ($raw as $row) {
+                $ts = (int)$row['TimeStamp'];
+                $val = (float)$row['Value'];
+
+                // Zeitraum bis zum aktuellen Eintrag
+                $from = max($lastTS, $mStart);
+                $to   = min($ts, $mEnd + 1);
+                if ($to > $from) {
+                    $accumulate($from, $to, $lastVal);
+                }
+
+                // neuer Stand
+                $lastTS  = $ts;
+                $lastVal = $val;
+            }
+
+            // Rest bis Monatsende
+            $from = max($lastTS, $mStart);
+            $to   = $mEnd + 1;
+            if ($to > $from) {
+                $accumulate($from, $to, $lastVal);
+            }
+
+            // Minuten/AVG berechnen
+            $minutesTotal = (int)round($sumSecs / 60);
+            $avg = ($sumSecs > 0) ? ($sumValSecs / $sumSecs) : 0.0;
+
+            $perMonthStats[$key] = [
+                'minutesTotal' => $minutesTotal,
+                'max'          => $maxVal,
+                'avg'          => $avg,
+                'buckets'      => $secsPerBucket
             ];
         }
 
-        // Globales echtes Max über alle Monate
-        $globalMax = 0.0;
-        foreach ($monthsInfo as $m) {
-            $maxM = $this->readMonthMax_duration($acID, $pvID, $m['start'], $m['end']);
-            if ($maxM > $globalMax) $globalMax = $maxM;
-        }
-        if ($globalMax <= 0) $globalMax = 1.0;
-
-        // 10 Bänder (Dezile) aus globalem Max
-        $bands = [];
-        for ($d = 1; $d <= 10; $d++) $bands[] = ($globalMax * $d) / 10.0;
-
-        // pro Monat: Verteilung + Stats
-        $results    = [];
-        $monthStats = [];
-        foreach ($monthsInfo as $idx => $m) {
-            $results[$idx]    = $this->computeMonthDeciles_duration($acID, $pvID, $m['start'], $m['end'], $bands);
-            $monthStats[$idx] = $this->computeMonthAvgMax($acID, $pvID, $m['start'], $m['end']);
-        }
-
-        // globale Max-Zelle finden (Monat/Band)
-        $globalIdx = 0; $globalVal = -INF;
-        foreach ($results as $i => $r) {
-            if (($r['maxVal'] ?? 0) > $globalVal) { $globalVal = $r['maxVal']; $globalIdx = $i; }
-        }
-        $globalMaxMonthIndex = $globalIdx;
-        $globalMaxBandIndex  = $results[$globalIdx]['maxBand'] ?? 9;
-
-        // Rendern
-        $html = $this->renderHeatmap($monthsInfo, $bands, $results, $monthStats, $globalMaxMonthIndex, $globalMaxBandIndex);
-        SetValueString($this->GetIDForIdent('ReportDeciles'), $html);
-
-        $summary = $this->buildSummary($globalMax, $monthsInfo, $results, $acID, $pvID);
-        SetValueString($this->GetIDForIdent('ReportSummary'), $summary);
+        return [$yearMax, $decileBounds, $perMonthStats];
     }
 
-    /* =================== Struktur/Variablen-Helpers =================== */
-
-    private function EnsureCategory(int $parentID, string $name, string $ident): int
+    private function GetMonthMax(int $acID, int $varID, int $startTS, int $endTS): ?float
     {
-        $id = @IPS_GetObjectIDByIdent($ident, $parentID);
-        if ($id && IPS_GetObject($id)['ObjectType'] === 0) {
-            if (IPS_GetObject($id)['ObjectName'] !== $name) IPS_SetName($id, $name);
-            return $id;
+        $raw = @AC_GetLoggedValues($acID, $varID, $startTS, $endTS, 0);
+        if (!is_array($raw) || count($raw) === 0) {
+            // Versuche letzten Wert vor Monatsbeginn mitzunehmen
+            $prev = @AC_GetLoggedValues($acID, $varID, 0, $startTS - 1, 1);
+            if (is_array($prev) && count($prev) > 0) {
+                return (float)$prev[0]['Value'];
+            }
+            return null;
         }
-        $id = IPS_CreateCategory();
-        IPS_SetParent($id, $parentID);
+        $max = null;
+        foreach ($raw as $r) {
+            $v = (float)$r['Value'];
+            if ($max === null || $v > $max) {
+                $max = $v;
+            }
+        }
+        return $max ?? null;
+    }
+
+    /* =========================
+     *   Rendering
+     * ========================= */
+
+    private function RenderSummary(float $yearMax, array $perMonth): string
+    {
+        // Kennzahlen: aktueller Monat
+        $nowKey = date('Y-m');
+        $mKeys  = array_keys($perMonth);
+        sort($mKeys);
+        $lastKey = end($mKeys) ?: $nowKey;
+
+        $cur = $perMonth[$lastKey] ?? [
+            'minutesTotal' => 0,
+            'max' => 0.0,
+            'avg' => 0.0
+        ];
+
+        $maxStr = number_format($cur['max'], 1, ',', '.');
+        $avgStr = number_format($cur['avg'], 1, ',', '.');
+        $yearMaxStr = number_format($yearMax, 1, ',', '.');
+
+        $css = $this->BaseCSS();
+
+        $html  = '<div class="pa-card">';
+        $html .= '<div class="pa-title">Kurzfazit</div>';
+        $html .= '<div class="pa-text">';
+        $html .= '• <b>Aktueller Monat:</b> Max <b>'.$maxStr.' W</b>, Durchschnitt <b>'.$avgStr.' W</b><br>';
+        $html .= '• <b>Jahres-Maximum (Skala):</b> <b>'.$yearMaxStr.' W</b>';
+        $html .= '</div></div>';
+
+        return $css . $html;
+    }
+
+    private function RenderHeatmap(array $bounds, array $perMonth): string
+    {
+        // Sortiere Monate (letzte 12 zuerst)
+        $keys = array_keys($perMonth);
+        sort($keys);
+        $last12 = array_slice($keys, -12);
+
+        // Kopfzeile
+        $thMonths = '';
+        foreach ($last12 as $k) {
+            $thMonths .= '<th class="pa-th">'.htmlspecialchars($this->FormatMonthKey($k)).'</th>';
+        }
+        $thMonths .= '<th class="pa-th">Summe</th>';
+
+        $yearMax = end($bounds); // bounds[10]
+
+        // Tabelle aufbauen
+        $rows = '';
+        for ($b = 9; $b >= 0; $b--) {
+            $low  = $bounds[$b];
+            $high = $bounds[$b+1];
+            $bandLabel = number_format($low, 1, ',', '.').'–'.number_format($high, 1, ',', '.').' W';
+
+            $tds = '';
+            $sumPercent = 0.0;
+
+            foreach ($last12 as $monKey) {
+                $st = $perMonth[$monKey] ?? null;
+                if (!$st || $st['minutesTotal'] <= 0) {
+                    $tds .= $this->Cell(0.0, 0, false);
+                    continue;
+                }
+                $secs = (int)($st['buckets'][$b] ?? 0);
+                $percent = ($st['minutesTotal'] > 0) ? (100.0 * ($secs / 60.0) / $st['minutesTotal']) : 0.0;
+                $sumPercent += $percent;
+
+                $minutes = $secs / 60.0;
+                $tds .= $this->Cell($percent, $minutes, $secs > 0);
+            }
+
+            // Summenspalte (über Monate – rein informativ)
+            $rows .= '<tr>';
+            $rows .= '<th class="pa-rowhead">'.$this->WrapText('Dezilband: '.$bandLabel).'</th>';
+            $rows .= $tds;
+            $rows .= '<td class="pa-sumcell">'.number_format($sumPercent, 2, ',', '.').'%</td>';
+            $rows .= '</tr>';
+        }
+
+        // Fußzeile „Summe 100 %“ je Monat + Max/Avg je Monat
+        $sumRow = '<tr><th class="pa-foothead">Summe</th>';
+        foreach ($last12 as $monKey) {
+            $st = $perMonth[$monKey] ?? null;
+            if (!$st || $st['minutesTotal'] <= 0) {
+                $sumRow .= '<td class="pa-footcell">—</td>';
+                continue;
+            }
+            // Prozent über alle Bänder:
+            $totalMinutes = $st['minutesTotal'];
+            $sumPerc = 0.0;
+            foreach ($perMonth[$monKey]['buckets'] as $secs) {
+                $sumPerc += (100.0 * ($secs / 60.0) / $totalMinutes);
+            }
+            // Auf 100.00% runden (nur Anzeige)
+            $sumRow .= '<td class="pa-footcell"><b>'.number_format($sumPerc, 2, ',', '.').'%</b><br>'
+                     . '<span class="pa-sub">Ø '.number_format($st['avg'], 1, ',', '.').' W · Max '.number_format($st['max'], 1, ',', '.').' W</span>'
+                     . '</td>';
+        }
+        $sumRow .= '<td class="pa-footcell">—</td></tr>';
+
+        $css = $this->BaseCSS();
+
+        $html  = '<div class="pa-card">';
+        $html .= '<div class="pa-title">Monatsanteile je Dezil (letzte 12 Monate)</div>';
+        $html .= '<table class="pa-table">';
+        $html .= '<thead><tr><th class="pa-th pa-sticky">Dezilband</th>'.$thMonths.'</tr></thead>';
+        $html .= '<tbody>'.$rows.'</tbody>';
+        $html .= '<tfoot>'.$sumRow.'</tfoot>';
+        $html .= '</table></div>';
+
+        return $css . $html;
+    }
+
+    private function Cell(float $percent, float $minutes, bool $hasData): string
+    {
+        $p = max(0.0, $percent);
+        $bg = $this->ColorForPercent($p); // <1% hellgrau
+        $txt = number_format(ceil($p * 100) / 100, 2, ',', '.').'%' ; // 2 Stellen, „aufrunden“ auf 2. Stelle
+        $minStr = $hasData ? '<br><span class="pa-sub">'.number_format($minutes, 2, ',', '.').' min</span>' : '<br><span class="pa-sub">0 min</span>';
+
+        return '<td class="pa-td" style="background: '.$bg.'">'.$txt.$minStr.'</td>';
+    }
+
+    private function ColorForPercent(float $p): string
+    {
+        // < 1% -> sehr helles Grau
+        if ($p < 1.0) {
+            return '#F0F0F0';
+        }
+        // Warme Abstufung (ohne dominantes Blau)
+        // 1%..100% mappen auf 0..1
+        $t = min(1.0, max(0.0, ($p - 1.0) / 99.0));
+        // einfache Interpolation zwischen hell (fast weiß) -> orange -> rot
+        // Start:   #FDFBE5 (253,251,229)
+        // Mitte:   #FDB366 (253,179,102)
+        // Ende:    #D84A4A (216,74,74)
+        $c1 = [253,251,229];
+        $c2 = [253,179,102];
+        $c3 = [216, 74, 74];
+        if ($t < 0.5) {
+            $k = $t / 0.5;
+            $r = intval($c1[0] + ($c2[0]-$c1[0])*$k);
+            $g = intval($c1[1] + ($c2[1]-$c1[1])*$k);
+            $b = intval($c1[2] + ($c2[2]-$c1[2])*$k);
+        } else {
+            $k = ($t-0.5)/0.5;
+            $r = intval($c2[0] + ($c3[0]-$c2[0])*$k);
+            $g = intval($c2[1] + ($c3[1]-$c2[1])*$k);
+            $b = intval($c2[2] + ($c3[2]-$c2[2])*$k);
+        }
+        return sprintf('#%02X%02X%02X', $r, $g, $b);
+    }
+
+    private function BaseCSS(): string
+    {
+        return <<<CSS
+<style>
+.pa-card{background:#121212;color:#FFFFFF;border:1px solid #333;border-radius:8px;padding:12px;margin:8px 0;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;}
+.pa-title{font-weight:700;margin-bottom:6px;}
+.pa-text{line-height:1.4}
+.pa-table{width:100%;border-collapse:separate;border-spacing:0}
+.pa-th{position:sticky;top:0;background:#1a1a1a;color:#000;border-bottom:1px solid #333;padding:6px;text-align:center;font-weight:700}
+.pa-sticky{left:0;z-index:2}
+.pa-rowhead{background:#1a1a1a;color:#000;border-right:1px solid #333;padding:6px;max-width:180px;word-wrap:break-word;white-space:normal}
+.pa-td{border-bottom:1px solid #222;border-right:1px solid #222;text-align:center;padding:6px;min-width:80px}
+.pa-sumcell{background:#0f0f0f;color:#fff;border-left:1px solid #333;padding:6px;text-align:center;font-weight:700}
+.pa-foothead{background:#0f0f0f;color:#fff;border-top:1px solid #333;border-right:1px solid #333;padding:6px}
+.pa-footcell{background:#0f0f0f;color:#fff;border-top:1px solid #333;border-right:1px solid #333;padding:6px;text-align:center}
+.pa-sub{display:block;font-size:11px;opacity:.9}
+.pa-warn{background:#2a1a1a;border:1px solid #662;color:#ffdede;border-radius:6px;padding:8px}
+</style>
+CSS;
+    }
+
+    private function WrapText(string $s): string
+    {
+        return htmlspecialchars($s);
+    }
+
+    private function WarnBox(string $msg): string
+    {
+        return $this->BaseCSS() . '<div class="pa-warn">'.$this->WrapText($msg).'</div>';
+    }
+
+    /* =========================
+     *   Hilfsfunktionen
+     * ========================= */
+
+    private function EnsureCategory(string $ident, string $name, int $parentID): int
+    {
+        $id = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
+        if ($id && IPS_ObjectExists($id)) {
+            if (IPS_GetObject($id)['ObjectType'] === OBJECTTYPE_CATEGORY) {
+                IPS_SetName($id, $name);
+                IPS_SetParent($id, $parentID);
+                IPS_SetIdent($id, $ident);
+                return $id;
+            }
+        }
+        // neu
+        $catID = IPS_CreateCategory();
+        IPS_SetName($catID, $name);
+        IPS_SetParent($catID, $parentID);
+        IPS_SetIdent($catID, $ident);
+        return $catID;
+    }
+
+    private function EnsureHTMLVar(string $ident, string $name, int $parentID): int
+    {
+        $id = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
+        if (!$id) {
+            $id = IPS_CreateVariable(VARIABLETYPE_STRING);
+            IPS_SetIdent($id, $ident);
+        }
         IPS_SetName($id, $name);
-        IPS_SetIdent($id, $ident);
+        IPS_SetParent($id, $parentID);
+        IPS_SetInfo($id, 'Auto-generiert');
+        IPS_SetVariableCustomProfile($id, '~HTMLBox');
         return $id;
     }
 
-    private function EnsureVarProfile(string $name, int $type): void
+    private function EnsureIntegerVar(string $ident, string $name, int $parentID, string $profile, bool $writable): int
+    {
+        $id = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
+        if (!$id) {
+            $id = IPS_CreateVariable(VARIABLETYPE_INTEGER);
+            IPS_SetIdent($id, $ident);
+        }
+        IPS_SetName($id, $name);
+        IPS_SetParent($id, $parentID);
+        IPS_SetVariableCustomProfile($id, $profile);
+        if ($writable) {
+            IPS_SetVariableCustomAction($id, $this->InstanceID);
+        } else {
+            IPS_SetVariableCustomAction($id, 0);
+        }
+        return $id;
+    }
+
+    private function EnsureBooleanVar(string $ident, string $name, int $parentID, bool $writable): int
+    {
+        $id = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
+        if (!$id) {
+            $id = IPS_CreateVariable(VARIABLETYPE_BOOLEAN);
+            IPS_SetIdent($id, $ident);
+        }
+        IPS_SetName($id, $name);
+        IPS_SetParent($id, $parentID);
+        $this->EnsureBooleanProfile('PA.Toggle', 'Aus', 'An');
+        IPS_SetVariableCustomProfile($id, 'PA.Toggle');
+        IPS_SetVariableCustomAction($id, $writable ? $this->InstanceID : 0);
+        return $id;
+    }
+
+    private function EnsureBooleanProfile(string $name, string $off, string $on): void
     {
         if (!IPS_VariableProfileExists($name)) {
-            IPS_CreateVariableProfile($name, $type);
+            IPS_CreateVariableProfile($name, VARIABLETYPE_BOOLEAN);
+        }
+        IPS_SetVariableProfileAssociation($name, 0, $off, '', 0x666666);
+        IPS_SetVariableProfileAssociation($name, 1, $on,  '', 0x00AA00);
+    }
+
+    private function SetValueSafe(string $ident, $value): void
+    {
+        $id = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
+        if ($id && IPS_VariableExists($id)) {
+            @SetValue($id, $value);
         }
     }
 
-    private function EnsureVar(int $parentID, string $name, int $type, string $ident, string $profile = '')
+    private function UpdatePropertyAndVar(string $prop, string $ident, $value): void
     {
-        $vid = @IPS_GetObjectIDByIdent($ident, $parentID);
-        if ($vid === false) {
-            $vid = IPS_CreateVariable($type);
-            IPS_SetParent($vid, $parentID);
-            IPS_SetIdent($vid, $ident);
-            IPS_SetName($vid, $name);
-            if ($profile !== '') IPS_SetVariableCustomProfile($vid, $profile);
-        } else {
-            if ($profile !== '') IPS_SetVariableCustomProfile($vid, $profile);
-            IPS_SetName($vid, $name);
-        }
-        return $vid;
-    }
-
-    private function SetValueIfChanged(int $varID, $value): void
-    {
-        $cur = @GetValue($varID);
-        if ($cur !== $value) {
-            SetValue($varID, $value);
+        $ok = $this->UpdatePropertyValue($prop, $value);
+        $this->SetValueSafe($ident, $value);
+        if ($ok) {
+            $this->ApplyChanges(); // neu anwenden
         }
     }
 
-    private function SetConfigAndValue(string $propName, string $ident, $value): void
+    private function UpdatePropertyValue(string $prop, $value): bool
     {
-        // Variable (im Konfig-Ordner) setzen
-        $varID = @IPS_GetObjectIDByIdent($ident, $this->ReadAttributeInteger('CfgCategoryID'));
-        if ($varID) SetValue($varID, $value);
-
-        // Property setzen (persistente Konfig)
-        IPS_SetProperty($this->InstanceID, $propName, $value);
+        // Properties sind schreibgeschützt, aber über die JSON-Config änderbar:
+        // Workaround: alte Properties lesen, array anpassen, speichern
+        $cfg = json_decode(IPS_GetConfiguration($this->InstanceID), true) ?: [];
+        $cfg[$prop] = $value;
+        IPS_SetConfiguration($this->InstanceID, json_encode($cfg));
+        return true;
     }
 
-    private function SetSummaryBox(string $text): void
+    private function MonthStart(int $ts): int
     {
-        $box = '<div style="font-family:Arial; color:#fff; background:#333; padding:8px;">'
-             . htmlspecialchars($text) . '</div>';
-        SetValueString($this->GetIDForIdent('ReportSummary'), $box);
+        return (int)strtotime(date('Y-m-01 00:00:00', $ts));
+    }
+    private function MonthEnd(int $monthStartTS): int
+    {
+        return (int)strtotime(date('Y-m-t 23:59:59', $monthStartTS));
     }
 
-    /**
-     * Action-Forwarder-Skript anlegen/aktualisieren.
-     * Leitet CustomAction der Config-Variablen an RequestAction() dieser Instanz.
-     */
-    private function EnsureActionScript(): int
+    private function FormatMonthKey(string $ym): string
     {
-        $ident    = 'ActionForward';
-        $parentID = $this->ReadAttributeInteger('CfgCategoryID') ?: $this->InstanceID;
-
-        $sid = @IPS_GetObjectIDByIdent($ident, $parentID);
-        if ($sid === false) {
-            $sid = IPS_CreateScript(0); // 0 = PHP
-            IPS_SetParent($sid, $parentID);
-            IPS_SetIdent($sid, $ident);
-            IPS_SetName($sid, 'PowerAnalyzer Action Forwarder');
+        // "YYYY-MM" -> "MM.YYYY"
+        $parts = explode('-', $ym);
+        if (count($parts) == 2) {
+            return $parts[1] . '.' . $parts[0];
         }
-
-        $code = '<?php
-$iid  = ' . $this->InstanceID . ';
-$vid  = $_IPS["VARIABLE"];
-$val  = $_IPS["VALUE"];
-$ident = IPS_GetObject($vid)["ObjectIdent"]; // z.B. "ArchiveIDVar"
-IPS_RequestAction($iid, $ident, $val);
-';
-        IPS_SetScriptContent($sid, $code);
-        return $sid;
+        return $ym;
     }
 
-    /* =================== Analyse-Hilfsfunktionen =================== */
-
-    // ECHTES Monats-Max aus geloggten Rows (Value), Duration egal
-    private function readMonthMax_duration(int $acID, int $varID, int $start, int $end): float
+    private function WriteHTML(string $ident, string $html): void
     {
-        $max = 0.0;
-        $rows = @AC_GetLoggedValues($acID, $varID, $start, $end, 0) ?: [];
-        foreach ($rows as $r) {
-            $v = (float)$r['Value'];
-            if ($v > $max) $max = $v;
+        $id = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
+        if ($id && IPS_VariableExists($id)) {
+            @SetValueString($id, $html);
         }
-        return $max;
     }
 
-    /**
-     * Zeitgewichtete Verteilung:
-     * - jede Row: clamp auf [start,end] -> Dauer d in s
-     * - Dauer exakt EINEM Dezil zuordnen (inkl. oberes Intervall)
-     * - Prozent auf 2 NK, aufrunden (Mind. 0,01 % falls >0), Summenkorrektur -> 100,00 %
-     */
-    private function computeMonthDeciles_duration(int $acID, int $varID, int $start, int $end, array $bands): array
+    private function Log(string $msg): void
     {
-        $sec = array_fill(0, 10, 0);
-        $rows = @AC_GetLoggedValues($acID, $varID, $start, $end, 0) ?: [];
-
-        $monthMaxVal  = 0.0;
-        $monthMaxBand = 9;
-
-        foreach ($rows as $r) {
-            $ts  = (int)$r['TimeStamp'];
-            $dur = (int)$r['Duration'];   // Sekunden laut IP-Symcon
-            $val = (float)$r['Value'];
-
-            // auf Monatsfenster clampen
-            $segStart = max($ts, $start);
-            $segEnd   = min($ts + $dur, $end);
-            $d = $segEnd - $segStart;
-            if ($d <= 0) continue;
-
-            // Max tracken
-            if ($val > $monthMaxVal) {
-                $monthMaxVal  = $val;
-                $monthMaxBand = $this->valueToBandByEdges($val, $bands);
-            }
-
-            // Dauer genau einem Band zuordnen
-            $idx = $this->valueToBandByEdges($val, $bands);
-            $sec[$idx] += $d;
+        if ((bool)$this->ReadPropertyBoolean(self::PROP_DEBUG)) {
+            $this->SendDebug('PowerAnalyzer', $msg, 0);
         }
-
-        // Sekunden -> Prozent
-        $sum = array_sum($sec);
-        $pct = array_fill(0, 10, 0.0);
-
-        if ($sum > 0) {
-            for ($i = 0; $i < 10; $i++) {
-                $raw = ($sec[$i] / $sum) * 100.0;
-                if ($raw <= 0.0) {
-                    $pct[$i] = 0.00;
-                } else {
-                    // immer auf 2 NK AUFRUNDEN (und min. 0,01%, falls > 0)
-                    $up = ceil($raw * 100.0) / 100.0;
-                    if ($up < 0.01) $up = 0.01;
-                    $pct[$i] = round($up, 2);
-                }
-            }
-            // Summenkorrektur auf exakt 100,00 %
-            $sumRounded = array_sum($pct);
-            $diff = round(100.00 - $sumRounded, 2);
-            if (abs($diff) >= 0.01) {
-                $k = array_keys($pct, max($pct))[0];
-                $pct[$k] = round($pct[$k] + $diff, 2);
-                if ($pct[$k] < 0.00)   $pct[$k] = 0.00;
-                if ($pct[$k] > 100.00) $pct[$k] = 100.00;
-            }
-        }
-
-        return ['pct' => $pct, 'sec' => $sec, 'maxVal' => $monthMaxVal, 'maxBand' => $monthMaxBand];
     }
+}
 
-    // inklusives Mapping: v <= edge[i] -> i; letzter Band enthält Max
-    private function valueToBandByEdges(float $v, array $bands): int
-    {
-        if ($v <= 0) return 0;
-        $k = count($bands);
-        for ($i = 0; $i < $k; $i++) {
-            if ($v <= $bands[$i]) return $i; // inklusiv
-        }
-        return $k - 1;
+/**
+ * Öffentliche Funktionsstubs (für Timer)
+ * Achtung: KEINE globalen Funktionsduplikate (vermeidet "Cannot redeclare ...")
+ */
+function PA_Update(int $InstanceID): void
+{
+    $m = IPS_GetInstance($InstanceID);
+    if ($m['ModuleInfo']['ModuleID'] === IPS_GetInstance($InstanceID)['ModuleInfo']['ModuleID']) {
+        /** @var PowerAnalyzer $obj */
+        $obj = IPS_GetInstanceObject($InstanceID);
     }
-
-    private function computeMonthAvgMax(int $acID, int $varID, int $start, int $end): array
-    {
-        $vals = @AC_GetAggregatedValues($acID, $varID, 1, $start, $end, 0); // stündlich
-        if (!is_array($vals) || count($vals) == 0) return ['avg' => 0.0, 'max' => 0.0];
-        $sum = 0.0; $c = 0; $mx = 0.0;
-        foreach ($vals as $v) {
-            $sum += (float)$v['Avg']; $c++;
-            if ((float)$v['Max'] > $mx) $mx = (float)$v['Max'];
-        }
-        $avg = $c > 0 ? $sum / $c : 0.0;
-        return ['avg' => round($avg, 1), 'max' => round($mx, 1)];
-    }
-
-    /* =================== Rendering =================== */
-
-    private function renderHeatmap(array $months, array $bands, array $results, array $monthStats, int $gMon, int $gBand): string
-    {
-        // Zeilenlabels (Dezil-Bänder)
-        $decLabels = []; $lo = 0.0;
-        for ($i = 0; $i < 10; $i++) {
-            $hi = $bands[$i];
-            $decLabels[$i] = number_format($lo, 1, ',', '.') . '–' . number_format($hi, 1, ',', '.') . ' W';
-            $lo = $hi;
-        }
-
-        $css = <<<CSS
-<style>
-.pa_mod { font-family: Arial,sans-serif; background:#fff; color:#000; }
-.pa_mod table { border-collapse: collapse; width:100%; table-layout:fixed; }
-.pa_mod th,.pa_mod td { border:1px solid #ccc; padding:6px 8px; text-align:center; vertical-align:middle; }
-.pa_mod th { background:#f0f0f0; color:#000; font-weight:600; }
-.pa_mod .rowhdr { text-align:left; background:#f9f9f9; color:#000; font-weight:600; white-space: normal; word-break: break-word; }
-.pa_mod .sum100 { font-weight:bold; color:#000; }
-.pa_mod .monstat { display:block; font-size:11px; line-height:1.25; color:#000; margin-top:2px; }
-.pa_mod .maxcell { border:2px solid #000 !important; }
-</style>
-CSS;
-
-        $thead = '<tr><th class="rowhdr">Dezil-Band (W)</th>';
-        foreach ($months as $m) {
-            $thead .= '<th>' . htmlspecialchars($m['label'] . ' ' . $m['y']) . '</th>';
-        }
-        $thead .= '</tr>';
-
-        $tbody = '';
-        // Bänderzeilen
-        for ($r = 0; $r < 10; $r++) {
-            $tbody .= '<tr><td class="rowhdr">' . htmlspecialchars($decLabels[$r]) . '</td>';
-            foreach ($months as $idx => $m) {
-                $p    = $results[$idx]['pct'][$r] ?? 0.0;
-                $secs = $results[$idx]['sec'][$r] ?? 0;
-                $pPrint = number_format($p, 2, ',', '.');
-                $isZero = (round($p, 2) === 0.00);
-                $color  = $isZero ? '#ffffff' : $this->pctToBlueYellow($p);
-                // Sekunden <60 als "x s", sonst Minuten (aufgerundet)
-                $timeTxt = ($secs < 60) ? ($secs . ' s') : (ceil($secs / 60) . ' min');
-
-                $cls = ($idx === $gMon && $r === $gBand) ? ' class="maxcell"' : '';
-                $tbody .= '<td' . $cls . ' style="background:' . $color . ';color:#000;">'
-                        . $pPrint . ' %'
-                        . '<span class="monstat">' . $timeTxt . '</span>'
-                        . '</td>';
-            }
-            $tbody .= '</tr>';
-        }
-
-        // Summenzeile + Monatsstats
-        $tbody .= '<tr><td class="rowhdr sum100">Summe</td>';
-        foreach ($months as $idx => $m) {
-            $sum = array_sum($results[$idx]['pct'] ?? []);
-            $sumPrint = number_format($sum, 2, ',', '.');
-            $avg = $monthStats[$idx]['avg'] ?? 0.0;
-            $mx  = $monthStats[$idx]['max'] ?? 0.0;
-            $tbody .= '<td class="sum100">' . $sumPrint . ' %'
-                    . '<span class="monstat">Ø ' . number_format($avg, 1, ',', '.') . ' W<br>Max ' . number_format($mx, 1, ',', '.') . ' W</span>'
-                    . '</td>';
-        }
-        $tbody .= '</tr>';
-
-        return $css . '<div class="pa_mod"><table><thead>' . $thead . '</thead><tbody>' . $tbody . '</tbody></table></div>';
-    }
-
-    private function pctToBlueYellow(float $p): string
-    {
-        if (round($p, 2) === 0.00) return '#ffffff';
-        $p = max(0.0, min(100.0, $p)) / 100.0;
-        $b = [30, 144, 255]; $y = [255, 215, 0];
-        $r = (int)round($b[0] + ($y[0] - $b[0]) * $p);
-        $g = (int)round($b[1] + ($y[1] - $b[1]) * $p);
-        $bl= (int)round($b[2] + ($y[2] - $b[2]) * $p);
-        return "rgb($r,$g,$bl)";
-    }
-
-    private function buildSummary(float $max, array $months, array $res, int $acID, int $varID): string
-    {
-        $now = time();
-        $monthStart = strtotime(date('Y-m-01 00:00:00', $now));
-        $monthEnd   = strtotime(date('Y-m-t 23:59:59', $now));
-        $dayStart   = strtotime('today 00:00:00');
-        $dayEnd     = strtotime('today 23:59:59');
-
-        $avgMonth = $this->computeAvg($acID, $varID, $monthStart, $monthEnd);
-        $maxMonth = $this->computeMax($acID, $varID, $monthStart, $monthEnd);
-
-        $avgDay   = $this->computeAvg($acID, $varID, $dayStart, $dayEnd);
-        $maxDay   = $this->computeMax($acID, $varID, $dayStart, $dayEnd);
-
-        $firstStart = $months[0]['start'] ?? $monthStart;
-        $lastEnd    = $months[count($months)-1]['end'] ?? $monthEnd;
-        $avgGlobal  = $this->computeAvg($acID, $varID, $firstStart, $lastEnd);
-
-        $txt  = '<div style="font-family:Arial; color:#fff; background:#333; padding:8px">';
-        $txt .= '<div>Jahresmax (Zeitraum): <b>' . number_format($max, 1, ',', '.') . ' W</b></div>';
-        $txt .= '<div>Aktueller Monat: ⌀ <b>' . number_format($avgMonth, 1, ',', '.') . ' W</b>, '
-              . 'Max <b>' . number_format($maxMonth, 1, ',', '.') . ' W</b></div>';
-        $txt .= '<div>Heute: ⌀ <b>' . number_format($avgDay, 1, ',', '.') . ' W</b>, '
-              . 'Max <b>' . number_format($maxDay, 1, ',', '.') . ' W</b></div>';
-        $txt .= '<div>Gesamt‑Ø (alle Monate): <b>' . number_format($avgGlobal, 1, ',', '.') . ' W</b></div>';
-        $txt .= '</div>';
-        return $txt;
-    }
-
-    private function computeAvg(int $acID, int $varID, int $start, int $end): float
-    {
-        $vals = @AC_GetAggregatedValues($acID, $varID, 1, $start, $end, 0); // stündlich
-        if (!is_array($vals) || count($vals) == 0) return 0.0;
-        $sum = 0.0; $c = 0;
-        foreach ($vals as $v) { $sum += (float)$v['Avg']; $c++; }
-        return $c > 0 ? $sum / $c : 0.0;
-    }
-
-    private function computeMax(int $acID, int $varID, int $start, int $end): float
-    {
-        $vals = @AC_GetAggregatedValues($acID, $varID, 1, $start, $end, 0);
-        if (!is_array($vals) || count($vals) == 0) return 0.0;
-        $m = 0.0;
-        foreach ($vals as $v) { $vMax = (float)$v['Max']; if ($vMax > $m) $m = $vMax; }
-        return $m;
-    }
+    /** Besser: direkt call_user_func mit Modul-Instanz */
+    /** @noinspection PhpUndefinedMethodInspection */
+    @IPS_RequestAction($InstanceID, 'PA_INTERNAL_UPDATE', true); // optionaler interner Weg (hier nicht genutzt)
+    /** Fallback: */
+    /** @var PowerAnalyzer $module */
+    $module = new PowerAnalyzer($InstanceID);
+    $module->Update();
 }
