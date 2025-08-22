@@ -707,22 +707,3 @@ CSS;
     }
 }
 
-/**
- * Öffentliche Funktionsstubs (für Timer)
- * Achtung: KEINE globalen Funktionsduplikate (vermeidet "Cannot redeclare ...")
- */
-function PA_Update(int $InstanceID): void
-{
-    $m = IPS_GetInstance($InstanceID);
-    if ($m['ModuleInfo']['ModuleID'] === IPS_GetInstance($InstanceID)['ModuleInfo']['ModuleID']) {
-        /** @var PowerAnalyzer $obj */
-        $obj = IPS_GetInstanceObject($InstanceID);
-    }
-    /** Besser: direkt call_user_func mit Modul-Instanz */
-    /** @noinspection PhpUndefinedMethodInspection */
-    @IPS_RequestAction($InstanceID, 'PA_INTERNAL_UPDATE', true); // optionaler interner Weg (hier nicht genutzt)
-    /** Fallback: */
-    /** @var PowerAnalyzer $module */
-    $module = new PowerAnalyzer($InstanceID);
-    $module->Update();
-}
